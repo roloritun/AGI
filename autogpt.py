@@ -9,18 +9,14 @@ from typing import Optional
 from dotenv import load_dotenv
 
 from langchain.agents import Tool
-from langchain_community.tools.file_management.read import ReadFileTool
-from langchain_community.tools.file_management.write import WriteFileTool
 from langchain_community.tools import OpenWeatherMapQueryRun
 from langchain_community.utilities.openweathermap import OpenWeatherMapAPIWrapper
 from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
-from langchain_core.runnables import RunnablePassthrough
 from langchain_community.docstore.in_memory import InMemoryDocstore
 from langchain_community.vectorstores import FAISS
 from langchain_community.chat_message_histories import FileChatMessageHistory
 
-import autogpt.agent as agent_module
 from autogpt.agent import AutoGPT
 from config import LLM, EMBEDDINGS
 from utils.performance import (

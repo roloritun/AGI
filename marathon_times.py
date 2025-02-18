@@ -23,17 +23,19 @@ from langchain_experimental.agents.agent_toolkits.pandas.base import (
 from langchain.agents import Tool
 from langchain_community.tools.file_management.read import ReadFileTool
 from langchain_community.tools.file_management.write import WriteFileTool
-from langchain.tools import BaseTool, DuckDuckGoSearchRun
+from langchain.tools import BaseTool
+from langchain_community.tools import DuckDuckGoSearchRun
 from langchain.chains.qa_with_sources.loading import (
     BaseCombineDocumentsChain,
     load_qa_with_sources_chain,
 )
+from langchain_community.tools.human.tool import HumanInputRun
+
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.docstore.in_memory import InMemoryDocstore
 from langchain_community.vectorstores import FAISS
 from pydantic import Field
 
-import autogpt.agent as agent_module
 from autogpt.agent import AutoGPT
 from config import LLM, EMBEDDINGS
 
@@ -48,8 +50,21 @@ nest_asyncio.apply()
 
 ROOT_DIR = "./data/"
 
+
 # Create data directory if it doesn't exist
 os.makedirs(ROOT_DIR, exist_ok=True)
+def get_input() -> str:
+    print("Insert your text. Enter 'q' or press Ctrl-D (or Ctrl-Z on Windows) to end.")
+    contents = []
+    while True:
+        try:
+            line = input()
+        except EOFError:
+            break
+        if line == "q":
+            break
+        contents.append(line)
+    return "\n".join(contents)
 
 
 @contextmanager
@@ -181,7 +196,7 @@ def initialize_vectorstore():
     )
 
 
-def initialize_tools(llm: LLM) -> list[Tool]:
+def initialize_tools(llm: LLM) -> list[Tool]: # type: ignore
     """Initialize all tools for the agent."""
     web_search = DuckDuckGoSearchRun()
     query_website_tool = WebpageQATool(qa_chain=load_qa_with_sources_chain(llm))
@@ -192,6 +207,7 @@ def initialize_tools(llm: LLM) -> list[Tool]:
         ReadFileTool(root_dir="./data"),
         process_csv,
         query_website_tool,
+        HumanInputRun(input_func=get_input),
     ]
 
 
@@ -223,6 +239,7 @@ def main(performance_stats=None):
         tools=tools,
         llm=LLM,
         memory=vectorstore.as_retriever(search_kwargs={"k": 8}),
+        #human_in_the_loop=True,
     )
 
     # Run the analysis

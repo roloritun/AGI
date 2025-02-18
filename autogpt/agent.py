@@ -63,7 +63,8 @@ class AutoGPT:
             token_counter=llm.get_num_tokens,
         )
         human_feedback_tool = HumanInputRun() if human_in_the_loop else None
-        chain = LLMChain(llm=llm, prompt=prompt)
+        chain = prompt | llm 
+        # LLMChain(llm=llm, prompt=prompt)
         return cls(
             ai_name,
             memory,

@@ -63,13 +63,20 @@ class BabyAGI(Chain, BaseModel):  # type: ignore[misc]
             "\033[95m\033[1m" + "\n*****TASK LIST*****\n" + "\033[0m\033[0m"
         )  # noqa: T201
         for t in self.task_list:
-            print(str(t["task_id"]) + ": " + t["task_name"])  # noqa: T201
+            task_name = t["task_name"] if isinstance(t, dict) else t
+            task_id = t["task_id"] if isinstance(t, dict) else "1"
+            print(f"{task_id}: {task_name}")  # noqa: T201  # noqa: T201
 
     def print_next_task(self, task: Dict) -> None:
         print(
             "\033[92m\033[1m" + "\n*****NEXT TASK*****\n" + "\033[0m\033[0m"
         )  # noqa: T201
-        print(str(task["task_id"]) + ": " + task["task_name"])  # noqa: T201
+        if isinstance(task, dict):
+            task_name = task.get("task_name", "")
+            task_id = task.get("task_id", "1")
+            print(f"{task_id}: {task_name}")  # noqa: T201
+        else:
+            print(f"1: {task}")  # noqa: T201
 
     def print_task_result(self, result: str) -> None:
         print(
@@ -206,8 +213,16 @@ class BabyAGI(Chain, BaseModel):  # type: ignore[misc]
 
                 # Step 3: Store the result in Pinecone
                 result_id = f"result_{task['task_id']}_{num_iters}"
+
+                # Convert result to string if it's a list
+                if isinstance(result, (tuple, list)):
+                    result_text = str(result[0]) if result else ""
+                else:
+                    result_text = str(result)
+
+                # Update the vectorstore add_texts call
                 self.vectorstore.add_texts(
-                    texts=[result],
+                    texts=[result_text],
                     metadatas=[{"task": task["task_name"]}],
                     ids=[result_id],
                 )
@@ -234,7 +249,8 @@ class BabyAGI(Chain, BaseModel):  # type: ignore[misc]
                     "\033[91m\033[1m" + "\n*****TASK ENDING*****\n" + "\033[0m\033[0m"
                 )
                 break
-        return {}
+        # Return the result
+        return {"result": result_text}
 
     @classmethod
     def from_llm(

@@ -22,8 +22,10 @@ from langchain_experimental.agents.agent_toolkits.pandas.base import (
 )
 from langchain.agents import Tool
 from langchain_community.tools.file_management.read import ReadFileTool
-from langchain_community.tools.file_management.write import WriteFileTool
-from langchain.tools import BaseTool, DuckDuckGoSearchRun
+from tools.file_tools import CustomWriteFileTool
+from langchain.tools import BaseTool
+from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_core.tools import ToolException
 from langchain.chains.qa_with_sources.loading import (
     BaseCombineDocumentsChain,
     load_qa_with_sources_chain,
@@ -32,10 +34,9 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.docstore.in_memory import InMemoryDocstore
 from langchain_community.vectorstores import FAISS
 from pydantic import Field
+from langchain_community.tools.human.tool import HumanInputRun
 
-from langchain.agents import AgentExecutor, Tool, ZeroShotAgent
 from babyagi.baby_agi import BabyAGI
-from langchain.chains import LLMChain
 
 from config import LLM, EMBEDDINGS
 
@@ -45,6 +46,9 @@ from utils.performance import (
     PerformanceCallbackHandler,
 )
 
+from langchain_core.prompts import PromptTemplate
+from langchain.agents import create_react_agent, AgentExecutor
+
 # Needed since jupyter runs an async eventloop
 nest_asyncio.apply()
 
@@ -52,6 +56,20 @@ ROOT_DIR = "./data2/"
 
 # Create data directory if it doesn't exist
 os.makedirs(ROOT_DIR, exist_ok=True)
+
+
+def get_input() -> str:
+    print("Insert your text. Enter 'q' or press Ctrl-D (or Ctrl-Z on Windows) to end.")
+    contents = []
+    while True:
+        try:
+            line = input()
+        except EOFError:
+            break
+        if line == "q":
+            break
+        contents.append(line)
+    return "\n".join(contents)
 
 
 @contextmanager
@@ -144,30 +162,28 @@ class WebpageQATool(BaseTool):
     qa_chain: BaseCombineDocumentsChain
 
     def _run(self, query: str) -> str:
-        """Useful for browsing websites and answering questions about them.
-        Input should be formatted as 'url||question'"""
         try:
             url, question = query.split("||")
         except ValueError:
-            return "Please provide input in the format: url||question"
+            raise ToolException("Please provide input in the format: url||question")
 
         result = browse_web_page.run(url)
         docs = [Document(page_content=result, metadata={"source": url})]
         web_docs = self.text_splitter.split_documents(docs)
+
         results = []
         for i in range(0, len(web_docs), 4):
             input_docs = web_docs[i : i + 4]
-            window_result = self.qa_chain(
-                {"input_documents": input_docs, "question": question},
-                return_only_outputs=True,
+            window_result = self.qa_chain.invoke(
+                {"input_documents": input_docs, "question": question}
             )
             results.append(f"Response from window {i} - {window_result}")
+
         results_docs = [
             Document(page_content="\n".join(results), metadata={"source": url})
         ]
-        return self.qa_chain(
-            {"input_documents": results_docs, "question": question},
-            return_only_outputs=True,
+        return self.qa_chain.invoke(
+            {"input_documents": results_docs, "question": question}
         )
 
     async def _arun(self, query: str) -> str:
@@ -188,109 +204,73 @@ def initialize_vectorstore():
     )
 
 
-def safe_write_file(input_str: str, text: str = None) -> str:
-    """Safely write text to a file with proper error handling.
-    Can be called in two ways:
-    1. safe_write_file(file_path, text)
-    2. safe_write_file("file_path||text")
-    """
-    try:
-        if text is None:
-            # Assume input is in format "file_path||text"
-            if "||" not in input_str:
-                return "Error: When providing single argument, use format 'file_path||text'"
-            file_path, text = input_str.split("||", 1)
-        else:
-            # Using two-argument format
-            file_path = input_str
-            
-        # Clean up file path
-        file_path = file_path.strip()
-        
-        # Generate filename from content if none provided
-        if not file_path:
-            words = text.split()[:3]  # Take first 3 words
-            file_path = "_".join(word.lower() for word in words if word.isalnum())
-            if not file_path:
-                file_path = "output"
-        
-        # Add .txt extension if missing
-        if not file_path.endswith('.txt'):
-            file_path += '.txt'
-            
-        # Ensure filename is unique
-        base_path = os.path.splitext(file_path)[0]
-        ext = os.path.splitext(file_path)[1]
-        counter = 1
-        while os.path.exists(os.path.join(ROOT_DIR, file_path)):
-            file_path = f"{base_path}_{counter}{ext}"
-            counter += 1
-            
-        # Write the file
-        with open(os.path.join(ROOT_DIR, file_path), 'w') as f:
-            f.write(text)
-        return f"Successfully wrote to {file_path}"
-    except Exception as e:
-        return f"Error writing to file: {str(e)}"
-
-
 def initialize_tools(llm: LLM) -> list[Tool]:
     """Initialize all tools for the agent."""
     web_search = DuckDuckGoSearchRun()
     query_website_tool = WebpageQATool(qa_chain=load_qa_with_sources_chain(llm))
 
-    # Create a wrapped version of WriteFileTool
-    write_tool = Tool(
-        name="write_file",
-        func=safe_write_file,
-        description="""Write text to a file. Can be used in two ways:
-        1. Single argument: 'filename||content' (will generate filename if empty)
-        2. Two arguments: filename and content
-        Will add .txt extension automatically and ensure unique filename."""
-    )
-
     return [
         web_search,
-        write_tool,  # Use our wrapped version instead
-        ReadFileTool(root_dir=ROOT_DIR),
+        Tool(
+            name="write_file",
+            func=lambda x: CustomWriteFileTool().invoke(
+                {"file_path": "./data2/" + x.split("||")[0], "text": x.split("||")[1]}
+            ),
+            description="Write a file to disk. Input should be formatted as 'file_path||content'",
+        ),
+        ReadFileTool(root_dir="./data2"),
         process_csv,
         query_website_tool,
+        HumanInputRun(input_func=get_input),
     ]
 
 
-def create_agent(
-    tools: list[Tool], performance_stats: Optional[PerformanceStats] = None
-) -> AgentExecutor:
-    """Create the agent executor with the given tools and LLM."""
-    # Create the agent prompt
-    prefix = """You are an AI who performs one task based on the following objective: {objective}. Take into account these previously completed tasks: {context}."""
-    suffix = """Question: {task}
-{agent_scratchpad}"""
-    prompt = ZeroShotAgent.create_prompt(
-        tools,
-        prefix=prefix,
-        suffix=suffix,
-        input_variables=["objective", "task", "context", "agent_scratchpad"],
+def create_agent(tools, performance_stats):
+    # Update the prompt template with output key
+    prompt = PromptTemplate(
+        input_variables=[
+            "objective",
+            "task",
+            "context",
+            "tools",
+            "tool_names",
+            "agent_scratchpad",
+        ],
+        template="""
+            You are working on the following objective: {objective}
+            Current task: {task}
+            Previous context: {context}
+
+            You have access to the following tools:
+            {tools}
+
+            Use the following format:
+            Question: the task you must complete
+            Thought: you should always think about what to do
+            Action: the action to take, should be one of [{tool_names}]
+            Action Input: the input to the action
+            Observation: the result of the action
+            ... (this Thought/Action/Action Input/Observation can repeat N times)
+            Thought: I now know what to do
+            Final Answer: the final result of executing the task
+
+            Begin!
+            Question: {task}
+            Thought: {agent_scratchpad}""",
     )
+    # Create the agent with specific output key
+    agent = create_react_agent(llm=LLM, tools=tools, prompt=prompt)
 
-    # Create the LLM chain with callback handler
-    callbacks = (
-        [PerformanceCallbackHandler(performance_stats)] if performance_stats else None
-    )
-    llm_chain = LLMChain(llm=LLM, prompt=prompt, callbacks=callbacks)
-
-    # Create the agent
-    tool_names = [tool.name for tool in tools]
-    agent = ZeroShotAgent(llm_chain=llm_chain, allowed_tools=tool_names)
-
-    # Create and return the agent executor
+    # Create the agent executor with output key
     return AgentExecutor.from_agent_and_tools(
         agent=agent,
         tools=tools,
         verbose=True,
-        max_iterations=5,  # Prevent infinite loops
         handle_parsing_errors=True,
-        callbacks=callbacks,  # Add callbacks to the executor as well
+        max_iterations=5,
+        early_stopping_method="force",
+        return_intermediate_steps=True,
+        output_key="output",  # Add this line to specify the output key
     )
 
 
@@ -319,7 +299,7 @@ def main(performance_stats: Optional[PerformanceStats] = None):
 
     # Configure BabyAGI with more specific first task
     OBJECTIVE = """What were the winning boston marathon times for the past 5 years (ending in 2022)? 
-             Generate a table of the year, name, country of origin, and times and write to marathon_results.txt."""
+             Generate a table of the year, name, country of origin, and write as csv."""
     FIRST_TASK = "Search for Boston Marathon winners and their times from 2018-2022"
     max_iterations: Optional[int] = 3
 
@@ -335,10 +315,18 @@ def main(performance_stats: Optional[PerformanceStats] = None):
         task_execution_chain=agent_executor,
         verbose=True,
         max_iterations=max_iterations,
-        callbacks=callbacks,  # Add callbacks to BabyAGI
+        callbacks=callbacks,
     )
 
-    baby_agi.invoke({"objective": OBJECTIVE, "first_task": FIRST_TASK})
+    # Update the invoke call with simplified input structure
+    result = baby_agi.invoke(
+        {
+            "objective": OBJECTIVE,
+            "first_task": FIRST_TASK,  # Simplify to just pass the string
+        }
+    )
+
+    return result
 
 
 if __name__ == "__main__":
