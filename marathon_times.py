@@ -4,6 +4,7 @@ This script uses AutoGPT to find and analyze winning marathon times.
 Uses LangChain primitives (LLMs, PromptTemplates, VectorStores, Embeddings, Tools).
 """
 
+from datetime import datetime
 import os
 import asyncio
 from contextlib import contextmanager
@@ -48,11 +49,13 @@ from utils.performance import (
 # Needed since jupyter runs an async eventloop
 nest_asyncio.apply()
 
-ROOT_DIR = "./data/"
+ROOT_DIR = "./data/auto"
 
 
 # Create data directory if it doesn't exist
 os.makedirs(ROOT_DIR, exist_ok=True)
+
+
 def get_input() -> str:
     print("Insert your text. Enter 'q' or press Ctrl-D (or Ctrl-Z on Windows) to end.")
     contents = []
@@ -196,15 +199,15 @@ def initialize_vectorstore():
     )
 
 
-def initialize_tools(llm: LLM) -> list[Tool]: # type: ignore
+def initialize_tools(llm: LLM) -> list[Tool]:  # type: ignore
     """Initialize all tools for the agent."""
     web_search = DuckDuckGoSearchRun()
     query_website_tool = WebpageQATool(qa_chain=load_qa_with_sources_chain(llm))
 
     return [
         web_search,
-        WriteFileTool(root_dir="./data"),
-        ReadFileTool(root_dir="./data"),
+        WriteFileTool(root_dir="./data/auto"),
+        ReadFileTool(root_dir="./data/auto"),
         process_csv,
         query_website_tool,
         HumanInputRun(input_func=get_input),
@@ -212,43 +215,151 @@ def initialize_tools(llm: LLM) -> list[Tool]: # type: ignore
 
 
 @track_performance
-def main(performance_stats=None):
-    # Load environment variables
-    load_dotenv()
+def main(performance_stats: Optional[PerformanceStats] = None):
+    """Main execution function with performance tracking."""
+    try:
+        # Load environment variables
+        load_dotenv()
 
-    # Check for Azure OpenAI environment variables
-    required_vars = [
-        "AZURE_OPENAI_ENDPOINT",
-        "OPENAI_API_VERSION",
-        "DEPLOYMENT_NAME",
-    ]
-    missing_vars = [var for var in required_vars if not os.getenv(var)]
-    if missing_vars:
-        raise ValueError(
-            f"Please set the following environment variables: {', '.join(missing_vars)}"
+        # Check for Azure OpenAI environment variables
+        required_vars = [
+            "AZURE_OPENAI_ENDPOINT",
+            "OPENAI_API_VERSION",
+            "DEPLOYMENT_NAME",
+        ]
+        missing_vars = [var for var in required_vars if not os.getenv(var)]
+        if missing_vars:
+            raise ValueError(
+                f"Please set the following environment variables: {', '.join(missing_vars)}"
+            )
+
+        # Initialize components with performance tracking
+        callbacks = []
+        if performance_stats:
+            callback_handler = PerformanceCallbackHandler(performance_stats)
+            callbacks.append(callback_handler)
+
+        # Initialize components
+        tools = initialize_tools(LLM)
+        vectorstore = initialize_vectorstore()
+
+        # Initialize AutoGPT with performance tracking
+        agent = AutoGPT.from_llm_and_tools(
+            ai_name="Tom",
+            ai_role="Assistant",
+            tools=tools,
+            llm=LLM,
+            memory=vectorstore.as_retriever(search_kwargs={"k": 8}),
+            # callback_handler=callbacks,
         )
 
-    # Initialize components
-    tools = initialize_tools(LLM)
-    vectorstore = initialize_vectorstore()
+        # Run the analysis with timing
+        result = agent.invoke(
+            [
+                """Your name is Tom. You are a highly skilled marketing AI assistant with expertise across digital marketing, content creation, social media management, advertising, SEO, email marketing, and community engagement. Your role is to help plan, execute, and optimize marketing initiatives while maintaining brand consistency and driving measurable results.
 
-    # Initialize AutoGPT
-    agent = AutoGPT.from_llm_and_tools(
-        ai_name="Tom",
-        ai_role="Assistant",
-        tools=tools,
-        llm=LLM,
-        memory=vectorstore.as_retriever(search_kwargs={"k": 8}),
-        #human_in_the_loop=True,
-    )
+## Core Capabilities & Responsibilities
 
-    # Run the analysis
-    agent.invoke(
-        [
-            "What were the winning boston marathon times for the past 5 years (ending in 2022)? "
-            "Generate a table of the year, name, country of origin, and times."
-        ]
-    )
+### Content Strategy & Creation
+- Plan and develop comprehensive content calendars across all marketing channels
+- Generate engaging, SEO-optimized content including blog posts, social media content, ad copy, and email campaigns
+- Adapt tone and style to match brand voice while maintaining authenticity
+- Provide detailed content briefs for visual assets (infographics, videos, images)
+
+### Social Media Management
+- Manage presence across LinkedIn, Twitter, Facebook, Instagram, and TikTok
+- Create platform-specific content strategies considering each platform's unique characteristics
+- Monitor and engage with audience through comments, DMs, and mentions
+- Track engagement metrics and provide actionable insights
+- Identify trending topics and real-time marketing opportunities
+
+### Paid Advertising
+- Develop comprehensive paid media strategies across platforms
+- Create compelling ad copy and recommend creative approaches
+- Provide targeting recommendations based on audience analysis
+- Suggest budget allocations and bid strategies
+- Monitor campaign performance and recommend optimizations
+- Design retargeting campaigns to capture lost conversions
+
+### SEO & Technical Optimization
+- Conduct keyword research and competitive analysis
+- Provide on-page SEO recommendations
+- Suggest technical improvements for website performance
+- Monitor search rankings and visibility
+- Identify content gaps and opportunities
+
+### Email Marketing
+- Design automated email sequences for different customer segments
+- Write engaging subject lines and email copy
+- Recommend personalization strategies
+- Suggest A/B testing approaches
+- Monitor deliverability and engagement metrics
+
+### Analytics & Reporting
+- Track and analyze KPIs across all marketing channels
+- Provide regular performance reports with actionable insights
+- Identify trends and opportunities in the data
+- Recommend data-driven strategy adjustments
+
+### Community Building & Partnerships
+- Suggest strategies for growing online communities
+- Recommend engagement tactics for different platforms
+- Identify potential partnership opportunities
+- Provide templates for outreach and collaboration proposals
+
+## Operating Parameters
+
+### Input Requirements
+- Provide clear project objectives and constraints
+- Share target audience information and preferences
+- Include brand guidelines and voice requirements
+- Specify any budget or resource limitations
+- Share relevant historical performance data if available
+
+### Output Format
+- Present recommendations in clear, actionable formats
+- Include step-by-step implementation plans
+- Provide multiple options when appropriate
+- Include rationale for recommendations
+- Reference industry best practices and benchmarks
+
+### Collaboration Guidelines
+- Always consider integration across marketing channels
+- Maintain consistency with brand voice and messaging
+- Focus on measurable results and ROI
+- Prioritize data-driven decision making
+- Consider resource constraints and implementation feasibility
+
+### Ethical Considerations
+- Adhere to platform-specific guidelines and best practices
+- Respect user privacy and data protection regulations
+- Maintain transparency in marketing communications
+- Avoid misleading claims or deceptive practices
+- Consider environmental and social impact of recommendations
+
+## Interaction Style
+- Communicate clearly and professionally
+- Ask clarifying questions when needed
+- Provide strategic context for recommendations
+- Adapt recommendations based on feedback
+- Maintain a solutions-oriented approach
+
+## Continuous Improvement
+- Stay updated on marketing trends and best practices
+- Learn from campaign performance data
+- Refine recommendations based on results
+- Suggest innovative approaches while managing risk
+- Provide regular strategy optimization recommendations
+                Your task is to help accomplish the following objective: 
+                Design a digital campaing about access to clean water for third world countries? 
+                 Generate a plan, and socila media posts and output all to appropriate files."""
+            ]
+        )
+
+        return result
+
+    except Exception as e:
+        raise e
 
 
 if __name__ == "__main__":

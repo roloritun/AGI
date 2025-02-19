@@ -97,16 +97,25 @@ class BabyAGI(Chain, BaseModel):  # type: ignore[misc]
     ) -> List[Dict]:
         """Get the next task."""
         task_names = [t["task_name"] for t in self.task_list]
-
         incomplete_tasks = ", ".join(task_names)
-        response = self.task_creation_chain.run(
-            result=result,
-            task_description=task_description,
-            incomplete_tasks=incomplete_tasks,
-            objective=objective,
-            **kwargs,
+
+        # Use invoke instead of run
+        response = self.task_creation_chain.invoke(
+            {
+                "result": result,
+                "task_description": task_description,
+                "incomplete_tasks": incomplete_tasks,
+                "objective": objective,
+                **kwargs,
+            }
         )
-        new_tasks = response.split("\n")
+
+        # Extract the string result from the response
+        response_text = (
+            response.get("text", "") if isinstance(response, dict) else str(response)
+        )
+        new_tasks = response_text.split("\n")
+
         return [
             {"task_name": task_name} for task_name in new_tasks if task_name.strip()
         ]
@@ -119,14 +128,23 @@ class BabyAGI(Chain, BaseModel):  # type: ignore[misc]
         next_task_id = int(this_task_id) + 1
 
         try:
-            response = self.task_prioritization_chain.run(
-                task_names=", ".join(task_names),
-                next_task_id=str(next_task_id),
-                objective=objective,
-                **kwargs,
+            # Replace run with invoke
+            response = self.task_prioritization_chain.invoke(
+                {
+                    "task_names": ", ".join(task_names),
+                    "next_task_id": str(next_task_id),
+                    "objective": objective,
+                    **kwargs,
+                }
             )
 
-            new_tasks = response.split("\n")
+            # Extract the string result from the response
+            response_text = (
+                response.get("text", "")
+                if isinstance(response, dict)
+                else str(response)
+            )
+            new_tasks = response_text.split("\n")
             prioritized_task_list = []
 
             current_task_id = next_task_id
@@ -180,10 +198,29 @@ class BabyAGI(Chain, BaseModel):  # type: ignore[misc]
 
     def execute_task(self, objective: str, task: str, k: int = 5, **kwargs: Any) -> str:
         """Execute a task."""
+        # Get relevant context from previous tasks
         context = self._get_top_tasks(query=objective, k=k)
-        return self.execution_chain.run(
-            objective=objective, context="\n".join(context), task=task, **kwargs
-        )
+
+        # Remove callbacks from kwargs if it exists to prevent duplication
+        kwargs.pop("callbacks", None)
+
+        # Format the input dictionary with all required fields
+        input_dict = {
+            "input": task,
+            "objective": objective,
+            "task": task,
+            "context": "\n".join(context),
+            "tools": str(self.execution_chain.tools),
+            "tool_names": [tool.name for tool in self.execution_chain.tools],
+            "agent_scratchpad": kwargs.pop("agent_scratchpad", ""),
+        }
+
+        try:
+            result = self.execution_chain.invoke(input_dict, **kwargs)
+            return result.get("output", str(result))
+        except Exception as e:
+            print(f"Error executing task: {e}")  # noqa: T201
+            return f"Task execution failed: {str(e)}"
 
     def _call(
         self,

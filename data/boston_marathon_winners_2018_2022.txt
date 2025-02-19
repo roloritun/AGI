@@ -1,6 +1,0 @@
-Year, Name, Country, Time
-2018, Desiree Linden, United States, 2:39:54
-2018, Kawauchi Yuki, Japan, 2:15:58
-2019, Lawrence Cherono, Kenya, Time not provided
-2022, Daniel Romanchuk, United States, 1:26:58
-2022, Peres Jepchirchir, Kenya, 2:21:01
